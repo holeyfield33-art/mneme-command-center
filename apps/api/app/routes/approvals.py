@@ -22,6 +22,7 @@ class ApprovalResponse(BaseModel):
     title: str
     summary: str
     risk_level: str
+    plan_details: dict | None = None
     status: str
     created_at: datetime
     

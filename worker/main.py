@@ -246,6 +246,7 @@ class MnemeWorker:
         summary: str,
         risk_level: str,
         approval_type: str = "plan",
+        plan_details: Optional[dict[str, Any]] = None,
     ) -> bool:
         """Create an approval request for a task."""
         try:
@@ -256,6 +257,7 @@ class MnemeWorker:
                     "summary": summary,
                     "risk_level": risk_level,
                     "approval_type": approval_type,
+                    "plan_details_json": json.dumps(plan_details) if plan_details else None,
                 },
                 timeout=5
             )
@@ -294,6 +296,32 @@ class MnemeWorker:
         if len(plan_markdown) <= max_chars:
             return plan_markdown
         return plan_markdown[:max_chars].rstrip() + "\n..."
+
+    def _extract_plan_details(self, plan_markdown: str) -> dict[str, Any]:
+        """Build a lightweight structured preview from a markdown plan."""
+        path_pattern = re.compile(r"([A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)")
+        files: list[dict[str, str]] = []
+        seen_paths: set[str] = set()
+
+        for raw_line in plan_markdown.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            match = path_pattern.search(line)
+            if not match:
+                continue
+
+            file_path = match.group(1)
+            if "/" not in file_path and file_path.count(".") == 1:
+                continue
+            if file_path in seen_paths:
+                continue
+
+            files.append({"path": file_path, "changes": line})
+            seen_paths.add(file_path)
+
+        return {"files": files}
 
     def _log_git_summary(self, task_id: str, git_summary: Dict[str, Any]) -> None:
         branch = git_summary.get("branch", "unknown")
@@ -532,6 +560,7 @@ class MnemeWorker:
         )
 
         computed_risk_level = estimate_risk_level(scan_result, profile.get("risk_notes", []))
+        plan_details = self._extract_plan_details(plan)
         summary = (
             "Repo-aware planning complete. "
             f"Branch: {git_summary.get('branch', 'unknown')}. "
@@ -547,6 +576,7 @@ class MnemeWorker:
             title="Approve implementation plan?",
             summary=summary,
             risk_level=computed_risk_level,
+            plan_details=plan_details,
         )
 
         if not success:

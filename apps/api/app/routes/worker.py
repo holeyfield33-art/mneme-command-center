@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime
+import json
 
 from ..database import get_db
 from ..events import broadcast_now
@@ -287,6 +288,7 @@ def create_approval_request(
     summary: str,
     risk_level: str = "medium",
     approval_type: str = "plan",
+    plan_details_json: str | None = None,
     db: Session = Depends(get_db)
 ):
     """Create an approval request for a task."""
@@ -297,6 +299,16 @@ def create_approval_request(
             detail="Task not found"
         )
     
+    plan_details = None
+    if plan_details_json:
+        try:
+            plan_details = json.loads(plan_details_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid plan_details_json: {exc.msg}",
+            )
+
     approval = Approval(
         id=generate_id(),
         task_id=task_id,
@@ -304,6 +316,7 @@ def create_approval_request(
         title=title,
         summary=summary,
         risk_level=RiskLevel(risk_level),
+        plan_details=plan_details,
         status=ApprovalStatus.PENDING
     )
 

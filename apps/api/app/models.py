@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, ForeignKey, Boolean
+from sqlalchemy import Column, String, Integer, Text, DateTime, Enum, ForeignKey, Boolean, JSON
 from sqlalchemy.orm import relationship
 import enum
 
@@ -107,6 +107,7 @@ class Approval(Base):
     title = Column(String)
     summary = Column(Text)
     risk_level = Column(Enum(RiskLevel), default=RiskLevel.MEDIUM)
+    plan_details = Column(JSON, nullable=True)
     status = Column(Enum(ApprovalStatus), default=ApprovalStatus.PENDING, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     

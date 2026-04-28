@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { approvals, tasks } from '../api'
+import ApprovalCard from '../components/ApprovalCard'
 
 export default function Approvals() {
   const [approvalList, setApprovalList] = useState([])
@@ -12,28 +13,34 @@ export default function Approvals() {
       setError('')
       const response = await approvals.list('pending')
       setApprovalList(response.data)
-      
-      // Load task details for each approval
-      for (const approval of response.data) {
-        if (!taskDetails[approval.task_id]) {
+
+      const uniqueTaskIds = [...new Set(response.data.map((approval) => approval.task_id))]
+      const loadedTasks = await Promise.all(
+        uniqueTaskIds.map(async (taskId) => {
           try {
-            const taskRes = await tasks.get(approval.task_id)
-            setTaskDetails(prev => ({
-              ...prev,
-              [approval.task_id]: taskRes.data
-            }))
+            const taskRes = await tasks.get(taskId)
+            return [taskId, taskRes.data]
           } catch (err) {
             console.error('Failed to load task', err)
+            return null
           }
+        })
+      )
+
+      const nextTaskDetails = {}
+      loadedTasks.forEach((entry) => {
+        if (entry) {
+          nextTaskDetails[entry[0]] = entry[1]
         }
-      }
+      })
+      setTaskDetails(nextTaskDetails)
     } catch (err) {
       setError('Failed to load approvals')
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [taskDetails])
+  }, [])
 
   useEffect(() => {
     loadApprovals()
@@ -66,6 +73,14 @@ export default function Approvals() {
     }
   }
 
+  const handleModify = (approvalId) => {
+    const details = window.prompt('Add modification guidance for this approval:')
+    if (!details) {
+      return
+    }
+    setError(`Modification requested for ${approvalId}: ${details}`)
+  }
+
   if (loading) {
     return <div style={{ padding: '2rem' }}>Loading...</div>
   }
@@ -85,63 +100,14 @@ export default function Approvals() {
           {approvalList.map(approval => {
             const task = taskDetails[approval.task_id]
             return (
-              <div
+              <ApprovalCard
                 key={approval.id}
-                style={{
-                  padding: '1.5rem',
-                  backgroundColor: 'white',
-                  borderRadius: '8px',
-                  border: '2px solid #ff6b6b'
-                }}
-              >
-                <h3>{approval.title}</h3>
-                <p style={{ margin: '0.5rem 0', color: '#555', fontSize: '0.9rem' }}>
-                  <strong>Risk:</strong> {approval.risk_level || 'medium'}
-                </p>
-                {task && (
-                  <p style={{ margin: '0.5rem 0', color: '#777', fontSize: '0.9rem' }}>
-                    <strong>Task:</strong> {task.objective}
-                  </p>
-                )}
-                <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: '#f9f9f9', borderRadius: '4px', maxHeight: '300px', overflowY: 'auto' }}>
-                  <strong>Plan:</strong>
-                  <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: '0.5rem 0 0 0' }}>
-                    {approval.summary}
-                  </pre>
-                </div>
-                <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <button
-                    onClick={() => handleApprove(approval.id)}
-                    style={{
-                      padding: '0.75rem 1.5rem',
-                      backgroundColor: '#28a745',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontWeight: 'bold',
-                      fontSize: '1rem'
-                    }}
-                  >
-                    ✓ Approve
-                  </button>
-                  <button
-                    onClick={() => handleReject(approval.id)}
-                    style={{
-                      padding: '0.75rem 1.5rem',
-                      backgroundColor: '#dc3545',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontWeight: 'bold',
-                      fontSize: '1rem'
-                    }}
-                  >
-                    ✕ Reject
-                  </button>
-                </div>
-              </div>
+                approval={approval}
+                task={task}
+                onApprove={handleApprove}
+                onReject={handleReject}
+                onModify={handleModify}
+              />
             )
           })}
         </div>
