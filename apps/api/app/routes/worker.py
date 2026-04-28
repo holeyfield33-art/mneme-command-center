@@ -41,9 +41,9 @@ class TaskForWorker(BaseModel):
         from_attributes = True
 
 
-    class WorkerLogCreate(BaseModel):
-        level: str = "info"
-        message: str
+class WorkerLogCreate(BaseModel):
+    level: str = "info"
+    message: str
 
 
 @router.post("/heartbeat")
