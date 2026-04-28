@@ -2,12 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import datetime
+from pathlib import Path
+import json
 
 from ..database import get_db
 from ..models import Task, TaskStatus, TaskMode, RiskLevel, Log, LogLevel, Approval, ApprovalStatus, ApprovalType, Project
 from ..events import broadcast_now
 from ..utils import generate_id, verify_token
 from ..notifier import ApiNotifier
+from ..config import settings
 from .auth import verify_token_header
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -50,6 +53,31 @@ class LogResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+def _artifact_dir() -> Path:
+    if settings.claude_artifact_dir.strip():
+        return Path(settings.claude_artifact_dir).expanduser().resolve()
+    return Path(__file__).resolve().parents[3] / "plans"
+
+
+def _artifact_path(task_id: str, artifact_type: str) -> Path:
+    suffix_map = {
+        "stdout": "_claude_stdout.log",
+        "stderr": "_claude_stderr.log",
+        "meta": "_claude_run.json",
+        "prompt": "_claude_prompt.md",
+        "diff": "_diff_summary.md",
+    }
+    if artifact_type not in suffix_map:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid artifact type")
+
+    path = (_artifact_dir() / f"{task_id}{suffix_map[artifact_type]}").resolve()
+    try:
+        path.relative_to(_artifact_dir())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid artifact path") from exc
+    return path
 
 
 @router.get("", response_model=list[TaskResponse])
@@ -232,3 +260,109 @@ def update_task_status(
         },
     )
     return task
+
+
+@router.post("/{task_id}/rerun-claude")
+def rerun_task_claude(
+    task_id: str,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Queue a failed task for Claude re-execution from approved plan state."""
+    verify_token_header(authorization)
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    if task.status not in {TaskStatus.FAILED, TaskStatus.DIFF_REVIEW_APPROVED}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task must be failed or diff_review_approved to rerun Claude"
+        )
+
+    latest_approved_plan = (
+        db.query(Approval)
+        .filter(
+            Approval.task_id == task.id,
+            Approval.type == ApprovalType.PLAN,
+            Approval.status == ApprovalStatus.APPROVED,
+        )
+        .order_by(Approval.created_at.desc())
+        .first()
+    )
+    if not latest_approved_plan:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Task cannot rerun without an approved plan"
+        )
+
+    task.status = TaskStatus.PLAN_APPROVED
+    task.updated_at = datetime.utcnow()
+    db.add(
+        Log(
+            id=generate_id(),
+            task_id=task_id,
+            level=LogLevel.INFO,
+            message="Manual rerun requested: queued for Claude execution",
+        )
+    )
+    db.commit()
+    db.refresh(task)
+
+    broadcast_now(
+        "task_status_changed",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+        },
+    )
+    return {"status": "queued_for_rerun", "task_id": task.id}
+
+
+@router.get("/{task_id}/artifacts/{artifact_type}")
+def get_task_artifact(
+    task_id: str,
+    artifact_type: str,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Fetch task artifact content for Claude execution diagnostics."""
+    verify_token_header(authorization)
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    path = _artifact_path(task_id, artifact_type)
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Artifact not found"
+        )
+
+    raw = path.read_text(encoding="utf-8")
+    content = raw
+    parsed_json = None
+    if artifact_type == "meta":
+        try:
+            parsed_json = json.loads(raw)
+            content = json.dumps(parsed_json, indent=2)
+        except json.JSONDecodeError:
+            parsed_json = None
+
+    return {
+        "task_id": task_id,
+        "artifact_type": artifact_type,
+        "path": str(path),
+        "content": content,
+        "json": parsed_json,
+        "size_bytes": path.stat().st_size,
+    }

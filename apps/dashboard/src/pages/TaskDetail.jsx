@@ -11,6 +11,12 @@ export default function TaskDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [runtimeStatus, setRuntimeStatus] = useState(null)
+  const [artifactType, setArtifactType] = useState('stdout')
+  const [artifactContent, setArtifactContent] = useState('')
+  const [artifactPath, setArtifactPath] = useState('')
+  const [artifactError, setArtifactError] = useState('')
+  const [loadingArtifact, setLoadingArtifact] = useState(false)
+  const [rerunLoading, setRerunLoading] = useState(false)
 
   const loadTask = useCallback(async () => {
     try {
@@ -49,6 +55,39 @@ export default function TaskDetail() {
     window.addEventListener('mneme:sse', onSSE)
     return () => window.removeEventListener('mneme:sse', onSSE)
   }, [loadTask, taskId])
+
+  useEffect(() => {
+    loadArtifact(artifactType)
+  }, [taskId, artifactType])
+
+  const loadArtifact = async (selectedType) => {
+    setLoadingArtifact(true)
+    setArtifactError('')
+    try {
+      const response = await tasks.getArtifact(taskId, selectedType)
+      setArtifactContent(response.data.content || '')
+      setArtifactPath(response.data.path || '')
+    } catch (err) {
+      setArtifactContent('')
+      setArtifactPath('')
+      setArtifactError('Artifact not available yet')
+    } finally {
+      setLoadingArtifact(false)
+    }
+  }
+
+  const handleRerunClaude = async () => {
+    setRerunLoading(true)
+    setError('')
+    try {
+      await tasks.rerunClaude(taskId)
+      await loadTask()
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Failed to queue rerun')
+    } finally {
+      setRerunLoading(false)
+    }
+  }
 
   if (loading) {
     return <div style={{ padding: '2rem' }}>Loading...</div>
@@ -96,6 +135,7 @@ export default function TaskDetail() {
   const planPath = findLogValue('Implementation plan generated:')
   const profilePath = findLogValue('Repo profile generated:')
   const claudePromptPath = findLogValue('Claude prompt generated:')
+  const claudeArtifacts = findLogValue('Claude artifacts written:')
   const diffSummaryPath = findLogValue('Diff summary generated:')
   const changedFiles = findLogValue('Changed files:')
 
@@ -179,11 +219,34 @@ export default function TaskDetail() {
 
       <div style={{ marginBottom: '2rem', padding: '1rem', backgroundColor: '#f9f9f9', borderRadius: '8px', border: '1px solid #ddd' }}>
         <h2>Execution Artifacts</h2>
+        {task.status === 'failed' && (
+          <div style={{ marginBottom: '1rem' }}>
+            <button
+              onClick={handleRerunClaude}
+              disabled={rerunLoading}
+              style={{
+                padding: '0.65rem 1.1rem',
+                backgroundColor: '#6f42c1',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: rerunLoading ? 'not-allowed' : 'pointer',
+                opacity: rerunLoading ? 0.7 : 1,
+                fontWeight: 'bold'
+              }}
+            >
+              {rerunLoading ? 'Queueing...' : 'Rerun with Claude'}
+            </button>
+          </div>
+        )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
           <div><strong>Claude Prompt Path:</strong> {claudePromptPath || 'N/A'}</div>
+          <div><strong>Claude Artifacts:</strong> {claudeArtifacts || 'N/A'}</div>
           <div><strong>Diff Summary Path:</strong> {diffSummaryPath || 'N/A'}</div>
           <div><strong>Claude Execution Required:</strong> {runtimeStatus?.claude_execution_required ? 'yes' : 'no'}</div>
           <div><strong>Claude Command Configured:</strong> {runtimeStatus?.claude_command_configured ? 'yes' : 'no'}</div>
+          <div><strong>Claude Key Configured:</strong> {runtimeStatus?.anthropic_api_key_configured ? 'yes' : 'no (CLI session mode)'}</div>
+          <div><strong>Claude Max Retries:</strong> {runtimeStatus?.claude_code_max_retries ?? 'N/A'}</div>
         </div>
         <div style={{ marginTop: '1rem' }}>
           <p><strong>Changed Files:</strong> {changedFiles || 'N/A'}</p>
@@ -213,6 +276,33 @@ export default function TaskDetail() {
             </pre>
           </div>
         )}
+
+        <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: 'white', borderRadius: '4px', border: '1px solid #e5e5e5' }}>
+          <div style={{ marginBottom: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <strong>Artifact Viewer:</strong>
+            <select
+              value={artifactType}
+              onChange={(event) => setArtifactType(event.target.value)}
+              style={{ padding: '0.35rem 0.5rem', borderRadius: '4px', border: '1px solid #ccc' }}
+            >
+              <option value="stdout">stdout</option>
+              <option value="stderr">stderr</option>
+              <option value="meta">meta</option>
+              <option value="prompt">prompt</option>
+              <option value="diff">diff</option>
+            </select>
+          </div>
+          {artifactPath && <p style={{ margin: '0.25rem 0 0.5rem 0', color: '#666', fontSize: '0.85rem' }}><strong>Path:</strong> {artifactPath}</p>}
+          {loadingArtifact ? (
+            <p>Loading artifact...</p>
+          ) : artifactError ? (
+            <p style={{ color: '#a94442' }}>{artifactError}</p>
+          ) : (
+            <pre style={{ maxHeight: '260px', overflow: 'auto', whiteSpace: 'pre-wrap', wordWrap: 'break-word', margin: 0, backgroundColor: '#fbfbfb', border: '1px solid #eee', borderRadius: '4px', padding: '0.65rem' }}>
+              {artifactContent || 'No content'}
+            </pre>
+          )}
+        </div>
       </div>
 
       <div style={{ padding: '1rem', backgroundColor: '#f9f9f9', borderRadius: '8px', border: '1px solid #ddd' }}>
