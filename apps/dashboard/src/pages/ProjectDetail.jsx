@@ -97,6 +97,7 @@ export default function ProjectDetail() {
           {project.repo_url && <div><strong>URL:</strong> {project.repo_url}</div>}
           <div><strong>Branch:</strong> {project.default_branch}</div>
           <div><strong>Status:</strong> {project.status}</div>
+          <div style={{ gridColumn: '1 / -1' }}><strong>Claude Command Override:</strong> {project.claude_code_command || 'global default'}</div>
         </div>
       </div>
 

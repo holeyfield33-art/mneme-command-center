@@ -15,6 +15,7 @@ class ProjectCreate(BaseModel):
     name: str
     repo_path: str
     repo_url: str = None
+    claude_code_command: str | None = None
     default_branch: str = "main"
 
 
@@ -22,6 +23,7 @@ class ProjectUpdate(BaseModel):
     name: str = None
     repo_path: str = None
     repo_url: str = None
+    claude_code_command: str | None = None
     default_branch: str = None
     status: str = None
 
@@ -31,6 +33,7 @@ class ProjectResponse(BaseModel):
     name: str
     repo_path: str
     repo_url: str
+    claude_code_command: str | None = None
     default_branch: str
     status: str
     created_at: datetime
@@ -73,6 +76,7 @@ def create_project(
         name=request.name,
         repo_path=request.repo_path,
         repo_url=request.repo_url,
+        claude_code_command=request.claude_code_command,
         default_branch=request.default_branch,
         status=ProjectStatus.ACTIVE
     )
@@ -124,6 +128,8 @@ def update_project(
         project.repo_path = request.repo_path
     if request.repo_url is not None:
         project.repo_url = request.repo_url
+    if request.claude_code_command is not None:
+        project.claude_code_command = request.claude_code_command
     if request.default_branch:
         project.default_branch = request.default_branch
     if request.status:

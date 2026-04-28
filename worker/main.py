@@ -14,8 +14,9 @@ import requests
 import socket
 import shlex
 import subprocess
+import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from worker.repo_planning import (
@@ -52,6 +53,9 @@ class MnemeWorker:
         self.command_timeout_seconds = int(
             os.getenv("CLAUDE_CODE_TIMEOUT_SECONDS", os.getenv("MNEME_COMMAND_TIMEOUT", "900"))
         )
+        self.claude_max_retries = max(1, int(os.getenv("CLAUDE_CODE_MAX_RETRIES", "1")))
+        self.claude_retry_delay_seconds = max(0, int(os.getenv("CLAUDE_CODE_RETRY_DELAY_SECONDS", "3")))
+        self.claude_artifact_dir = Path(os.getenv("CLAUDE_ARTIFACT_DIR", str(self.workspace_root / "plans")))
         self.allow_mock_claude_for_tests = os.getenv("ALLOW_MOCK_CLAUDE_FOR_TESTS", "false").strip().lower() == "true"
         self.enable_mock_claude_execution = os.getenv("ENABLE_MOCK_CLAUDE_EXECUTION", "false").strip().lower() == "true"
         self.notifier = WorkerNotifier()
@@ -294,6 +298,15 @@ class MnemeWorker:
     def _diff_summary_path(self, task_id: str) -> Path:
         return self.workspace_root / "plans" / f"{task_id}_diff_summary.md"
 
+    def _claude_stdout_path(self, task_id: str) -> Path:
+        return self.claude_artifact_dir / f"{task_id}_claude_stdout.log"
+
+    def _claude_stderr_path(self, task_id: str) -> Path:
+        return self.claude_artifact_dir / f"{task_id}_claude_stderr.log"
+
+    def _claude_meta_path(self, task_id: str) -> Path:
+        return self.claude_artifact_dir / f"{task_id}_claude_run.json"
+
     def _plan_excerpt(self, plan_markdown: str, max_chars: int = 500) -> str:
         if len(plan_markdown) <= max_chars:
             return plan_markdown
@@ -355,6 +368,77 @@ class MnemeWorker:
         except OSError as exc:
             return False, "", str(exc), 1
 
+    def _build_claude_command(self, prompt_path: Path, command_template: str) -> list[str]:
+        command_parts = shlex.split(command_template)
+        replaced_parts: list[str] = []
+        has_prompt_placeholder = False
+        prompt_value = str(prompt_path)
+
+        for part in command_parts:
+            if "{prompt_file}" in part:
+                has_prompt_placeholder = True
+                replaced_parts.append(part.replace("{prompt_file}", prompt_value))
+            else:
+                replaced_parts.append(part)
+
+        if not has_prompt_placeholder:
+            replaced_parts.append(prompt_value)
+
+        return replaced_parts
+
+    def _validate_claude_command(self, command: list[str]) -> tuple[bool, str]:
+        if not command:
+            return False, "Claude command is empty"
+
+        executable = command[0]
+        if "/" in executable:
+            path = Path(executable)
+            if not path.exists():
+                return False, f"Claude executable not found: {executable}"
+            return True, ""
+
+        if shutil.which(executable) is None:
+            return False, f"Claude executable `{executable}` is not on PATH"
+
+        return True, ""
+
+    def _write_claude_artifacts(
+        self,
+        task_id: str,
+        command: list[str],
+        stdout: str,
+        stderr: str,
+        exit_code: int,
+        success: bool,
+        attempts: int,
+    ) -> None:
+        self.claude_artifact_dir.mkdir(parents=True, exist_ok=True)
+        stdout_path = self._claude_stdout_path(task_id)
+        stderr_path = self._claude_stderr_path(task_id)
+        meta_path = self._claude_meta_path(task_id)
+
+        stdout_path.write_text(stdout or "", encoding="utf-8")
+        stderr_path.write_text(stderr or "", encoding="utf-8")
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "command": command,
+                    "exit_code": exit_code,
+                    "success": success,
+                    "attempts": attempts,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self.add_task_log(
+            task_id,
+            "info",
+            f"Claude artifacts written: stdout={stdout_path}, stderr={stderr_path}, meta={meta_path}",
+        )
+
     def _run_git_capture(self, repo_path: Path, args: list[str]) -> tuple[bool, str]:
         ok, stdout, stderr, _ = self._run_subprocess(["git", *args], repo_path)
         if ok:
@@ -402,14 +486,22 @@ class MnemeWorker:
             return path.read_text(encoding="utf-8"), path
         return (fallback_summary or "No approved plan text available."), path
 
-    def _run_claude_code(self, task_id: str, repo_path: Path, prompt_path: Path) -> tuple[bool, str]:
-        if not self.anthropic_api_key or not self.claude_code_command:
+    def _run_claude_code(
+        self,
+        task_id: str,
+        repo_path: Path,
+        prompt_path: Path,
+        command_override: str | None = None,
+    ) -> tuple[bool, str]:
+        effective_command = (command_override or self.claude_code_command or "").strip()
+
+        if not effective_command:
             if self._mock_claude_enabled():
                 self.add_task_log(task_id, "warning", "Claude execution mocked in explicit test mode.")
                 self.add_task_log(task_id, "info", "Claude command completed successfully (mocked)")
                 return True, "mocked"
 
-            message = "Claude execution is required but ANTHROPIC_API_KEY or CLAUDE_CODE_COMMAND is not configured."
+            message = "Claude execution is required but CLAUDE_CODE_COMMAND is not configured."
             self.add_task_log(task_id, "error", message)
             self._notify(
                 f"Mneme task failed: Claude execution is required but not configured.\nOpen: {self.notifier.task_link(task_id)}".strip(),
@@ -419,19 +511,65 @@ class MnemeWorker:
             self.mark_task_failed(task_id)
             return False, "failed"
 
-        command_parts = shlex.split(self.claude_code_command)
-        command = [*command_parts, str(prompt_path)]
+        if not self.anthropic_api_key:
+            self.add_task_log(task_id, "warning", "ANTHROPIC_API_KEY is not set; relying on CLI-authenticated Claude session.")
+
+        command = self._build_claude_command(prompt_path, effective_command)
+        command_ok, command_error = self._validate_claude_command(command)
+        if not command_ok:
+            self.add_task_log(task_id, "error", command_error)
+            self._notify(
+                f"Mneme task failed during Claude preflight.\nReason: {command_error}\nOpen: {self.notifier.task_link(task_id)}".strip(),
+                task_id=task_id,
+                level="error",
+            )
+            self.mark_task_failed(task_id)
+            return False, "failed"
+
         self.add_task_log(task_id, "info", f"Running Claude Code command: {' '.join(command)}")
+        self.add_task_log(
+            task_id,
+            "info",
+            f"Claude execution policy: retries={self.claude_max_retries}, timeout={self.command_timeout_seconds}s",
+        )
         self._notify(f"Mneme started Claude execution.\nOpen: {self.notifier.task_link(task_id)}".strip(), task_id=task_id)
 
-        ok, stdout, stderr, code = self._run_subprocess(command, repo_path)
+        ok = False
+        stdout = ""
+        stderr = ""
+        code = 1
+        attempt = 0
+        while attempt < self.claude_max_retries:
+            attempt += 1
+            ok, stdout, stderr, code = self._run_subprocess(command, repo_path)
+            if ok:
+                break
+            if attempt < self.claude_max_retries:
+                self.add_task_log(
+                    task_id,
+                    "warning",
+                    f"Claude attempt {attempt} failed (exit {code}); retrying in {self.claude_retry_delay_seconds}s",
+                )
+                if self.claude_retry_delay_seconds > 0:
+                    time.sleep(self.claude_retry_delay_seconds)
+
+        self._write_claude_artifacts(
+            task_id=task_id,
+            command=command,
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=code,
+            success=ok,
+            attempts=attempt,
+        )
+
         if stdout.strip():
             self.add_task_log(task_id, "info", f"Claude stdout: {stdout.strip()[:2000]}")
         if stderr.strip():
             self.add_task_log(task_id, "warning", f"Claude stderr: {stderr.strip()[:2000]}")
 
         if not ok:
-            self.add_task_log(task_id, "error", f"Claude command failed with exit code {code}")
+            self.add_task_log(task_id, "error", f"Claude command failed with exit code {code} after {attempt} attempt(s)")
             self._notify(
                 f"Mneme task failed during Claude execution.\nReason: exit code {code}\nOpen: {self.notifier.task_link(task_id)}".strip(),
                 task_id=task_id,
@@ -440,7 +578,7 @@ class MnemeWorker:
             self.mark_task_failed(task_id)
             return False, "failed"
 
-        self.add_task_log(task_id, "info", f"Claude command completed successfully (exit code {code})")
+        self.add_task_log(task_id, "info", f"Claude command completed successfully (exit code {code}, attempts={attempt})")
         return True, "ok"
 
     def _run_safe_tests(self, task_id: str, repo_path: Path, profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -613,6 +751,7 @@ class MnemeWorker:
         task_id = task["id"]
         project_name = task.get("project_name") or f"project-{task.get('project_id', 'unknown')}"
         repo_path_raw = task.get("repo_path")
+        project_claude_code_command = task.get("project_claude_code_command")
         checkpoint = load_checkpoint()
         resume_context = checkpoint.get("context", {}) if checkpoint and checkpoint.get("task_id") == task_id else {}
         resume_step = checkpoint.get("step") if checkpoint and checkpoint.get("task_id") == task_id else None
@@ -675,7 +814,12 @@ class MnemeWorker:
         save_markdown(prompt_path, prompt_text)
         self.add_task_log(task_id, "info", f"Claude prompt generated: {prompt_path}")
 
-        claude_ok, claude_state = self._run_claude_code(task_id, repo_path, prompt_path)
+        claude_ok, claude_state = self._run_claude_code(
+            task_id,
+            repo_path,
+            prompt_path,
+            command_override=project_claude_code_command,
+        )
         if not claude_ok:
             return False
 

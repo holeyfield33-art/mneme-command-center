@@ -12,6 +12,7 @@ export default function Projects() {
     name: '',
     repo_path: '',
     repo_url: '',
+    claude_code_command: '',
     default_branch: 'main'
   })
 
@@ -42,7 +43,7 @@ export default function Projects() {
     e.preventDefault()
     try {
       await projects.create(formData)
-      setFormData({ name: '', repo_path: '', repo_url: '', default_branch: 'main' })
+      setFormData({ name: '', repo_path: '', repo_url: '', claude_code_command: '', default_branch: 'main' })
       setShowForm(false)
       loadProjects()
     } catch (err) {
@@ -146,6 +147,23 @@ export default function Projects() {
                 }}
               />
             </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.25rem' }}>Claude Command Override (optional)</label>
+              <input
+                type="text"
+                name="claude_code_command"
+                value={formData.claude_code_command}
+                onChange={handleInputChange}
+                placeholder='claude --print --allowedTools "Edit,Write,Bash" {prompt_file}'
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
             <button
               type="submit"
               style={{
@@ -190,6 +208,9 @@ export default function Projects() {
             )}
             <p style={{ margin: '0.5rem 0', color: '#777', fontSize: '0.9rem' }}>
               <strong>Branch:</strong> {project.default_branch}
+            </p>
+            <p style={{ margin: '0.5rem 0', color: '#777', fontSize: '0.9rem' }}>
+              <strong>Claude Command:</strong> {project.claude_code_command || 'global default'}
             </p>
           </div>
         ))}

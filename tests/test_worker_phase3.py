@@ -30,7 +30,15 @@ class Phase3WorkerHarness(MnemeWorker):
         self.failed.append(task_id)
         return True
 
-    def create_approval_request(self, task_id: str, title: str, summary: str, risk_level: str, approval_type: str = "plan") -> bool:
+    def create_approval_request(
+        self,
+        task_id: str,
+        title: str,
+        summary: str,
+        risk_level: str,
+        approval_type: str = "plan",
+        plan_details=None,
+    ) -> bool:
         self.approvals.append((task_id, approval_type))
         return True
 
@@ -44,19 +52,24 @@ def test_missing_claude_config_fails_task_clearly() -> None:
     assert ok is False
     assert state == "failed"
     assert worker.failed == ["task-1"]
-    assert any("Claude execution is required" in message for _, _, message in worker.logged)
+    assert any("CLAUDE_CODE_COMMAND" in message for _, _, message in worker.logged)
 
 
-def test_missing_anthropic_key_fails_task_clearly() -> None:
+def test_missing_anthropic_key_uses_cli_authenticated_path(monkeypatch) -> None:
     worker = Phase3WorkerHarness(command="echo")
     worker.anthropic_api_key = ""
 
+    def fake_run_subprocess(command, cwd):
+        return True, "ok", "", 0
+
+    monkeypatch.setattr(worker, "_run_subprocess", fake_run_subprocess)
+
     ok, state = worker._run_claude_code("task-ak", Path("."), Path("plans/task-ak.md"))
 
-    assert ok is False
-    assert state == "failed"
-    assert worker.failed == ["task-ak"]
-    assert any("required" in message for _, _, message in worker.logged)
+    assert ok is True
+    assert state == "ok"
+    assert worker.failed == []
+    assert any("ANTHROPIC_API_KEY is not set" in message for _, _, message in worker.logged)
 
 
 def test_configured_claude_path_captures_output(monkeypatch) -> None:
@@ -96,6 +109,7 @@ def test_mocked_claude_only_in_explicit_test_mode(monkeypatch) -> None:
 def test_timeout_is_reported_as_failure(monkeypatch) -> None:
     worker = Phase3WorkerHarness(command="echo")
     worker.anthropic_api_key = "dummy-key"
+    worker.claude_max_retries = 1
 
     def fake_run_subprocess(command, cwd):
         return False, "", "Command timed out: echo", 124
@@ -108,6 +122,34 @@ def test_timeout_is_reported_as_failure(monkeypatch) -> None:
     assert state == "failed"
     assert worker.failed == ["task-timeout"]
     assert any("exit code 124" in message for _, _, message in worker.logged)
+
+
+def test_retry_eventually_succeeds(monkeypatch) -> None:
+    worker = Phase3WorkerHarness(command="echo")
+    worker.anthropic_api_key = "dummy-key"
+    worker.claude_max_retries = 2
+    calls = {"count": 0}
+
+    def fake_run_subprocess(command, cwd):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return False, "", "boom", 1
+        return True, "fixed", "", 0
+
+    monkeypatch.setattr(worker, "_run_subprocess", fake_run_subprocess)
+
+    ok, state = worker._run_claude_code("task-retry", Path("."), Path("plans/task-retry.md"))
+
+    assert ok is True
+    assert state == "ok"
+    assert calls["count"] == 2
+    assert any("retrying" in message for _, _, message in worker.logged)
+
+
+def test_prompt_placeholder_is_respected() -> None:
+    worker = Phase3WorkerHarness(command="echo {prompt_file} --flag")
+    command = worker._build_claude_command(Path("plans/task.md"), worker.claude_code_command)
+    assert command == ["echo", "plans/task.md", "--flag"]
 
 
 def test_execution_creates_diff_review_after_mocked_claude(monkeypatch, tmp_path: Path) -> None:

@@ -34,6 +34,7 @@ class TaskForWorker(BaseModel):
     project_name: str
     repo_path: str
     objective: str
+    project_claude_code_command: str | None = None
     mode: str
     risk_level: str
     status: str
@@ -113,6 +114,7 @@ def get_queued_tasks(
                 project_name=project.name,
                 repo_path=project.repo_path,
                 objective=task.objective,
+                project_claude_code_command=project.claude_code_command,
                 mode=task.mode.value,
                 risk_level=task.risk_level.value,
                 status=task.status.value,
@@ -156,6 +158,7 @@ def get_execution_ready_tasks(
                 project_name=project.name,
                 repo_path=project.repo_path,
                 objective=task.objective,
+                project_claude_code_command=project.claude_code_command,
                 mode=task.mode.value,
                 risk_level=task.risk_level.value,
                 status=task.status.value,

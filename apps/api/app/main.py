@@ -16,15 +16,20 @@ def ensure_schema_compatibility() -> None:
         return
 
     inspector = inspect(engine)
-    columns = {column["name"] for column in inspector.get_columns("approvals")}
+    approval_columns = {column["name"] for column in inspector.get_columns("approvals")}
+    project_columns = {column["name"] for column in inspector.get_columns("projects")}
     with engine.begin() as connection:
-        if "risk_level" not in columns:
+        if "risk_level" not in approval_columns:
             connection.execute(
                 text("ALTER TABLE approvals ADD COLUMN risk_level VARCHAR DEFAULT 'medium'")
             )
-        if "plan_details" not in columns:
+        if "plan_details" not in approval_columns:
             connection.execute(
                 text("ALTER TABLE approvals ADD COLUMN plan_details JSON")
+            )
+        if "claude_code_command" not in project_columns:
+            connection.execute(
+                text("ALTER TABLE projects ADD COLUMN claude_code_command VARCHAR")
             )
 
 

@@ -71,6 +71,7 @@ class Project(Base):
     name = Column(String, unique=True, index=True)
     repo_path = Column(String)
     repo_url = Column(String, nullable=True)
+    claude_code_command = Column(String, nullable=True)
     default_branch = Column(String, default="main")
     status = Column(Enum(ProjectStatus), default=ProjectStatus.ACTIVE)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
