@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { approvals, tasks, system } from '../api'
 
@@ -12,13 +12,7 @@ export default function TaskDetail() {
   const [error, setError] = useState('')
   const [runtimeStatus, setRuntimeStatus] = useState(null)
 
-  useEffect(() => {
-    loadTask()
-    const interval = setInterval(loadTask, 3000)
-    return () => clearInterval(interval)
-  }, [taskId])
-
-  const loadTask = async () => {
+  const loadTask = useCallback(async () => {
     try {
       setError('')
       const [taskRes, logsRes, runtimeRes] = await Promise.all([
@@ -38,7 +32,23 @@ export default function TaskDetail() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [taskId])
+
+  useEffect(() => {
+    loadTask()
+  }, [loadTask])
+
+  useEffect(() => {
+    const onSSE = (event) => {
+      const eventTaskId = event?.detail?.data?.task_id
+      if (!eventTaskId || eventTaskId === taskId) {
+        loadTask()
+      }
+    }
+
+    window.addEventListener('mneme:sse', onSSE)
+    return () => window.removeEventListener('mneme:sse', onSSE)
+  }, [loadTask, taskId])
 
   if (loading) {
     return <div style={{ padding: '2rem' }}>Loading...</div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { approvals, tasks } from '../api'
 
 export default function Approvals() {
@@ -7,13 +7,7 @@ export default function Approvals() {
   const [error, setError] = useState('')
   const [taskDetails, setTaskDetails] = useState({})
 
-  useEffect(() => {
-    loadApprovals()
-    const interval = setInterval(loadApprovals, 3000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const loadApprovals = async () => {
+  const loadApprovals = useCallback(async () => {
     try {
       setError('')
       const response = await approvals.list('pending')
@@ -39,7 +33,20 @@ export default function Approvals() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [taskDetails])
+
+  useEffect(() => {
+    loadApprovals()
+  }, [loadApprovals])
+
+  useEffect(() => {
+    const onSSE = () => {
+      loadApprovals()
+    }
+
+    window.addEventListener('mneme:sse', onSSE)
+    return () => window.removeEventListener('mneme:sse', onSSE)
+  }, [loadApprovals])
 
   const handleApprove = async (approvalId) => {
     try {

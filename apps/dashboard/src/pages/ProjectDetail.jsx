@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { projects, tasks } from '../api'
 
@@ -16,11 +16,7 @@ export default function ProjectDetail() {
     risk_level: 'medium'
   })
 
-  useEffect(() => {
-    loadProject()
-  }, [projectId])
-
-  const loadProject = async () => {
+  const loadProject = useCallback(async () => {
     try {
       setLoading(true)
       setError('')
@@ -36,7 +32,23 @@ export default function ProjectDetail() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [projectId])
+
+  useEffect(() => {
+    loadProject()
+  }, [loadProject])
+
+  useEffect(() => {
+    const onSSE = (event) => {
+      const eventProjectId = event?.detail?.data?.project_id
+      if (!eventProjectId || eventProjectId === projectId) {
+        loadProject()
+      }
+    }
+
+    window.addEventListener('mneme:sse', onSSE)
+    return () => window.removeEventListener('mneme:sse', onSSE)
+  }, [loadProject, projectId])
 
   const handleTaskInputChange = (e) => {
     const { name, value } = e.target

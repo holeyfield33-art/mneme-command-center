@@ -5,6 +5,7 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models import Task, TaskStatus, TaskMode, RiskLevel, Log, LogLevel, Approval, ApprovalStatus, ApprovalType, Project
+from ..events import broadcast_now
 from ..utils import generate_id, verify_token
 from ..notifier import ApiNotifier
 from .auth import verify_token_header
@@ -102,6 +103,15 @@ def create_task(
     db.commit()
     db.refresh(task)
 
+    broadcast_now(
+        "task_created",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+        },
+    )
+
     task_link = notifier.task_link(task.id)
     notifier.send(
         (
@@ -158,6 +168,16 @@ def add_task_log(
     db.add(log)
     db.commit()
     db.refresh(log)
+
+    broadcast_now(
+        "task_log_added",
+        {
+            "task_id": task_id,
+            "log_id": log.id,
+            "level": log.level.value,
+            "message": log.message,
+        },
+    )
     return log
 
 
@@ -202,4 +222,13 @@ def update_task_status(
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+
+    broadcast_now(
+        "task_status_changed",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+        },
+    )
     return task

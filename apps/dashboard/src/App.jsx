@@ -7,10 +7,12 @@ import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
 import TaskDetail from './pages/TaskDetail'
 import Approvals from './pages/Approvals'
+import useSSE from './useSSE'
 
 function Layout({ children }) {
   const navigate = useNavigate()
   const { isAuthenticated, logout } = useAuth()
+  const { isConnected } = useSSE()
 
   if (!isAuthenticated) {
     return children
@@ -37,6 +39,18 @@ function Layout({ children }) {
           <Link to="/approvals" style={{ color: 'white', textDecoration: 'none' }}>
             Approvals
           </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem' }}>
+            <span
+              style={{
+                width: '0.65rem',
+                height: '0.65rem',
+                borderRadius: '999px',
+                display: 'inline-block',
+                backgroundColor: isConnected ? '#2ecc71' : '#ff4d4f'
+              }}
+            />
+            Live {isConnected ? 'Connected' : 'Disconnected'}
+          </div>
         </div>
         <button
           onClick={() => {

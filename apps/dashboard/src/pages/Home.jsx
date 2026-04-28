@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { worker, tasks, approvals, system } from '../api'
 
@@ -12,13 +12,7 @@ export default function Home() {
   const [error, setError] = useState('')
   const [runtimeStatus, setRuntimeStatus] = useState(null)
 
-  useEffect(() => {
-    loadDashboard()
-    const interval = setInterval(loadDashboard, 5000)
-    return () => clearInterval(interval)
-  }, [])
-
-  const loadDashboard = async () => {
+  const loadDashboard = useCallback(async () => {
     try {
       setError('')
       const [workersRes, tasksRes, approvalsRes, stopStatusRes, runtimeRes] = await Promise.all([
@@ -40,7 +34,20 @@ export default function Home() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    loadDashboard()
+  }, [loadDashboard])
+
+  useEffect(() => {
+    const onSSE = () => {
+      loadDashboard()
+    }
+
+    window.addEventListener('mneme:sse', onSSE)
+    return () => window.removeEventListener('mneme:sse', onSSE)
+  }, [loadDashboard])
 
   const handleEmergencyStop = async () => {
     if (confirm('Are you sure you want to activate emergency stop?')) {

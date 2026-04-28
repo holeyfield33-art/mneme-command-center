@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from ..database import get_db
+from ..events import broadcast_now
 from ..models import Approval, ApprovalStatus, ApprovalType, Task, TaskStatus, Project
 from ..workflow import status_after_approval
 from ..utils import generate_id, verify_token
@@ -103,6 +104,25 @@ def approve_approval(
     
     db.commit()
     db.refresh(approval)
+
+    broadcast_now(
+        "approval_updated",
+        {
+            "approval_id": approval.id,
+            "task_id": approval.task_id,
+            "status": approval.status.value,
+            "type": approval.type.value,
+        },
+    )
+    if task:
+        broadcast_now(
+            "task_status_changed",
+            {
+                "task_id": task.id,
+                "project_id": task.project_id,
+                "status": task.status.value,
+            },
+        )
     return approval
 
 
@@ -138,4 +158,23 @@ def reject_approval(
     
     db.commit()
     db.refresh(approval)
+
+    broadcast_now(
+        "approval_updated",
+        {
+            "approval_id": approval.id,
+            "task_id": approval.task_id,
+            "status": approval.status.value,
+            "type": approval.type.value,
+        },
+    )
+    if task:
+        broadcast_now(
+            "task_status_changed",
+            {
+                "task_id": task.id,
+                "project_id": task.project_id,
+                "status": task.status.value,
+            },
+        )
     return approval

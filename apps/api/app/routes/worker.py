@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from ..database import get_db
+from ..events import broadcast_now
 from ..models import Worker, WorkerStatus, Task, TaskStatus, Approval, ApprovalType, ApprovalStatus, Project, RiskLevel, Log, LogLevel
 from ..utils import generate_id, verify_token, is_emergency_stop_active
 from .auth import verify_token_header
@@ -181,6 +182,14 @@ def mark_task_planning(
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+    broadcast_now(
+        "task_status_changed",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+        },
+    )
     return task
 
 
@@ -202,6 +211,14 @@ def mark_task_status(
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+    broadcast_now(
+        "task_status_changed",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+        },
+    )
     return task
 
 
@@ -223,6 +240,15 @@ def set_task_branch(
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+    broadcast_now(
+        "task_updated",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+            "branch_name": task.branch_name,
+        },
+    )
     return task
 
 
@@ -243,6 +269,14 @@ def mark_task_failed(
     task.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(task)
+    broadcast_now(
+        "task_status_changed",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+        },
+    )
     return task
 
 
@@ -283,6 +317,25 @@ def create_approval_request(
     db.add(approval)
     db.commit()
     db.refresh(approval)
+
+    broadcast_now(
+        "approval_created",
+        {
+            "approval_id": approval.id,
+            "task_id": approval.task_id,
+            "status": approval.status.value,
+            "type": approval.type.value,
+            "risk_level": approval.risk_level.value,
+        },
+    )
+    broadcast_now(
+        "task_status_changed",
+        {
+            "task_id": task.id,
+            "project_id": task.project_id,
+            "status": task.status.value,
+        },
+    )
     
     return approval
 
@@ -310,4 +363,13 @@ def add_worker_task_log(
     db.add(log)
     db.commit()
     db.refresh(log)
+    broadcast_now(
+        "task_log_added",
+        {
+            "task_id": task_id,
+            "log_id": log.id,
+            "level": log.level.value,
+            "message": log.message,
+        },
+    )
     return log

@@ -1,9 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import inspect, text
 
 from .database import engine, Base
 from .models import Project, Task, Approval, Log, Worker, SystemState
+from .events import manager
 from .routes import auth, projects, tasks, approvals, worker, system
 
 
@@ -14,13 +17,20 @@ def ensure_schema_compatibility() -> None:
 
     inspector = inspect(engine)
     columns = {column["name"] for column in inspector.get_columns("approvals")}
-    if "risk_level" in columns:
-        return
-
     with engine.begin() as connection:
-        connection.execute(
-            text("ALTER TABLE approvals ADD COLUMN risk_level VARCHAR DEFAULT 'medium'")
-        )
+        if "risk_level" not in columns:
+            connection.execute(
+                text("ALTER TABLE approvals ADD COLUMN risk_level VARCHAR DEFAULT 'medium'")
+            )
+        if "plan_details" not in columns:
+            connection.execute(
+                text("ALTER TABLE approvals ADD COLUMN plan_details JSON")
+            )
+
+
+class BroadcastRequest(BaseModel):
+    event_type: str
+    data: dict
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -55,6 +65,26 @@ app.include_router(system.router)
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+@app.get("/events")
+async def stream_events():
+    client = manager.add_client()
+
+    async def event_generator():
+        try:
+            while True:
+                yield await client.get()
+        finally:
+            manager.remove_client(client)
+
+    return EventSourceResponse(event_generator())
+
+
+@app.post("/events/broadcast")
+async def broadcast_event(request: BroadcastRequest):
+    await manager.broadcast(request.event_type, request.data)
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

@@ -140,6 +140,17 @@ class MnemeWorker:
             print(f"[ERROR] Error getting execution tasks: {e}")
             return []
 
+    def broadcast_event(self, event_type: str, data: Dict[str, Any]) -> None:
+        """Broadcast an internal SSE event through API best-effort."""
+        try:
+            requests.post(
+                f"{self.api_url}/events/broadcast",
+                json={"event_type": event_type, "data": data},
+                timeout=3,
+            )
+        except requests.RequestException:
+            pass
+
     def mark_task_planning(self, task_id: str) -> bool:
         """Mark task as planning."""
         try:
@@ -181,7 +192,13 @@ class MnemeWorker:
                 params={"new_status": new_status},
                 timeout=5,
             )
-            return response.status_code == 200
+            if response.status_code == 200:
+                self.broadcast_event(
+                    "task_status_changed",
+                    {"task_id": task_id, "status": new_status},
+                )
+                return True
+            return False
         except requests.RequestException:
             return False
 
@@ -210,6 +227,10 @@ class MnemeWorker:
             )
             if response.status_code == 200:
                 print(f"[LOG] [{level.upper()}] {message}")
+                self.broadcast_event(
+                    "task_log_added",
+                    {"task_id": task_id, "level": level, "message": message},
+                )
                 return True
             else:
                 print(f"[ERROR] Failed to add log: {response.status_code}")
@@ -240,6 +261,14 @@ class MnemeWorker:
             )
             if response.status_code == 200:
                 print(f"[INFO] Approval request created for task {task_id}")
+                self.broadcast_event(
+                    "approval_created",
+                    {
+                        "task_id": task_id,
+                        "approval_type": approval_type,
+                        "risk_level": risk_level,
+                    },
+                )
                 return True
             else:
                 print(f"[ERROR] Failed to create approval request: {response.status_code}")
