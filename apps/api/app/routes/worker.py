@@ -132,7 +132,7 @@ def get_execution_ready_tasks(
     tasks = (
         db.query(Task, Project)
         .join(Project, Task.project_id == Project.id)
-        .filter(Task.status.in_([TaskStatus.QUEUED_FOR_EXECUTION, TaskStatus.APPROVED_FOR_EXECUTION, TaskStatus.PLAN_APPROVED]))
+        .filter(Task.status.in_([TaskStatus.QUEUED_FOR_EXECUTION, TaskStatus.APPROVED_FOR_EXECUTION, TaskStatus.PLAN_APPROVED, TaskStatus.EXECUTING]))
         .all()
     )
 

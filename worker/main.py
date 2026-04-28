@@ -35,6 +35,7 @@ from worker.repo_planning import (
     slugify_project_name,
     validate_repo_path,
 )
+from worker.checkpointer import clear_checkpoint, load_checkpoint, save_checkpoint
 from worker.notifier import WorkerNotifier
 
 
@@ -177,6 +178,7 @@ class MnemeWorker:
             )
             if response.status_code == 200:
                 print(f"[INFO] Task {task_id} marked as failed")
+                clear_checkpoint()
                 return True
             print(f"[ERROR] Failed to mark task as failed: {response.status_code}")
             return False
@@ -501,6 +503,11 @@ class MnemeWorker:
         print(f"\n[INFO] Processing task: {task_id}")
         print(f"[INFO] Objective: {task['objective']}")
 
+        checkpoint = load_checkpoint()
+        if checkpoint and checkpoint.get("task_id") == task_id and checkpoint.get("step") == "plan_created":
+            self.add_task_log(task_id, "info", "Recovered checkpoint at plan_created; waiting for approval")
+            return True
+
         # Mark as planning
         if not self.mark_task_planning(task_id):
             return False
@@ -585,6 +592,15 @@ class MnemeWorker:
             return False
 
         self.add_task_log(task_id, "info", "Waiting for plan approval")
+        save_checkpoint(
+            task_id,
+            "plan_created",
+            {
+                "project_name": project_name,
+                "plan_path": str(plan_path),
+                "repo_path": str(resolved_repo_path),
+            },
+        )
         self._notify(
             f"Mneme needs plan approval.\nReview: {self.notifier.task_link(task_id)}".strip(),
             task_id=task_id,
@@ -597,9 +613,16 @@ class MnemeWorker:
         task_id = task["id"]
         project_name = task.get("project_name") or f"project-{task.get('project_id', 'unknown')}"
         repo_path_raw = task.get("repo_path")
+        checkpoint = load_checkpoint()
+        resume_context = checkpoint.get("context", {}) if checkpoint and checkpoint.get("task_id") == task_id else {}
+        resume_step = checkpoint.get("step") if checkpoint and checkpoint.get("task_id") == task_id else None
 
         self.add_task_log(task_id, "info", "Worker started approval-gated execution")
-        self.update_task_status(task_id, "approved_for_execution")
+        if resume_step in {"approved", "executing"}:
+            self.add_task_log(task_id, "info", f"Recovered checkpoint at step: {resume_step}")
+        else:
+            self.update_task_status(task_id, "approved_for_execution")
+            save_checkpoint(task_id, "approved", {"project_name": project_name})
 
         if not repo_path_raw:
             self.add_task_log(task_id, "error", "Execution failed: missing repo_path")
@@ -612,15 +635,26 @@ class MnemeWorker:
             self.mark_task_failed(task_id)
             return False
 
-        ok, branch_name, branch_error = self._create_execution_branch(task, repo_path)
-        if not ok:
-            self.add_task_log(task_id, "error", branch_error)
-            self.mark_task_failed(task_id)
-            return False
+        branch_name = resume_context.get("branch_name") if resume_step == "executing" else None
+        if not branch_name:
+            ok, branch_name, branch_error = self._create_execution_branch(task, repo_path)
+            if not ok:
+                self.add_task_log(task_id, "error", branch_error)
+                self.mark_task_failed(task_id)
+                return False
 
-        self.set_task_branch(task_id, branch_name)
-        self.add_task_log(task_id, "info", f"Execution branch created: {branch_name}")
+            self.set_task_branch(task_id, branch_name)
+            self.add_task_log(task_id, "info", f"Execution branch created: {branch_name}")
+
         self.update_task_status(task_id, "executing")
+        save_checkpoint(
+            task_id,
+            "executing",
+            {
+                "project_name": project_name,
+                "branch_name": branch_name,
+            },
+        )
 
         profile = self._load_repo_profile(project_name)
         if not profile:
@@ -693,6 +727,7 @@ class MnemeWorker:
             f"Mneme needs diff review approval.\nReview: {self.notifier.task_link(task_id)}".strip(),
             task_id=task_id,
         )
+        clear_checkpoint()
         return True
 
     def run(self, heartbeat_interval: int = 30):
