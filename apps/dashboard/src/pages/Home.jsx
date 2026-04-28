@@ -139,6 +139,10 @@ export default function Home() {
             <li><strong>Claude Execution Required:</strong> {runtimeStatus.claude_execution_required ? 'yes' : 'no'}</li>
             <li><strong>Claude Configured:</strong> {runtimeStatus.claude_configured ? 'yes' : 'no'}</li>
             <li><strong>Claude Command Configured:</strong> {runtimeStatus.claude_command_configured ? 'yes' : 'no'}</li>
+            <li><strong>Claude API Key Configured:</strong> {runtimeStatus.anthropic_api_key_configured ? 'yes' : 'no (CLI session mode)'}</li>
+            <li><strong>Claude Timeout (s):</strong> {runtimeStatus.claude_code_timeout_seconds}</li>
+            <li><strong>Claude Max Retries:</strong> {runtimeStatus.claude_code_max_retries}</li>
+            <li><strong>Prompt Placeholder in Command:</strong> {runtimeStatus.claude_command_supports_prompt_placeholder ? 'yes' : 'no (auto-appended)'}</li>
             <li><strong>Notifications Enabled:</strong> {runtimeStatus.notifications_enabled ? 'yes' : 'no'}</li>
             <li><strong>Telegram Configured:</strong> {runtimeStatus.telegram_configured ? 'yes' : 'no'}</li>
           </ul>

@@ -145,7 +145,21 @@ pip install -r requirements.txt
 export MNEME_API_URL=http://localhost:8000
 export MNEME_WORKER_ID=worker-1
 export MNEME_HEARTBEAT_INTERVAL=30
+export CLAUDE_CODE_COMMAND='claude --print --allowedTools "Edit,Write,Bash" {prompt_file}'
+export CLAUDE_CODE_TIMEOUT_SECONDS=900
+export CLAUDE_CODE_MAX_RETRIES=2
+export CLAUDE_CODE_RETRY_DELAY_SECONDS=3
+# Optional if your Claude CLI session is already authenticated
+export ANTHROPIC_API_KEY=
+# Optional; defaults to workspace plans directory
+export CLAUDE_ARTIFACT_DIR=
 ```
+
+Notes:
+
+- The `CLAUDE_CODE_COMMAND` value supports `{prompt_file}` placeholder.
+- If `{prompt_file}` is not present, the worker appends the prompt path automatically.
+- Each run writes artifacts (`stdout`, `stderr`, metadata JSON) to the artifact directory for debugging.
 
 ### Step 4: Run the Worker
 

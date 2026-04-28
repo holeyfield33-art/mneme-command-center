@@ -11,6 +11,9 @@ class Settings:
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     claude_code_command: str = os.getenv("CLAUDE_CODE_COMMAND", "")
     claude_code_timeout_seconds: int = int(os.getenv("CLAUDE_CODE_TIMEOUT_SECONDS", "900"))
+    claude_code_max_retries: int = int(os.getenv("CLAUDE_CODE_MAX_RETRIES", "1"))
+    claude_code_retry_delay_seconds: int = int(os.getenv("CLAUDE_CODE_RETRY_DELAY_SECONDS", "3"))
+    claude_artifact_dir: str = os.getenv("CLAUDE_ARTIFACT_DIR", "")
     allow_mock_claude_for_tests: bool = os.getenv("ALLOW_MOCK_CLAUDE_FOR_TESTS", "false").lower() == "true"
     telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "")
